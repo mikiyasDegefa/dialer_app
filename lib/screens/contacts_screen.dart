@@ -108,7 +108,7 @@ class _ContactList extends StatelessWidget {
     final keys = grouped.keys.toList()..sort();
 
     return ListView.builder(
-      itemCount: keys.fold(0, (sum, k) => sum + grouped[k]!.length + 1),
+      itemCount: keys.fold<int>(0, (sum, k) => sum + grouped[k]!.length + 1),
       itemBuilder: (context, index) {
         int running = 0;
         for (final key in keys) {
