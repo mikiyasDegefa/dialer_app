@@ -2,9 +2,11 @@ package com.example.dialer_app
 
 import android.content.Context
 import android.content.Intent
+import android.database.Cursor
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.CallLog
 import android.telecom.TelecomManager
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
@@ -14,7 +16,6 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.example.dialer_app/calls"
-    private var activeCall: android.telecom.Call? = null
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -76,6 +77,10 @@ class MainActivity : FlutterActivity() {
                         result.success(isDefaultDialer())
                     }
 
+                    "getCallLog" -> {
+                        result.success(getCallLog())
+                    }
+
                     else -> result.notImplemented()
                 }
             }
@@ -102,9 +107,55 @@ class MainActivity : FlutterActivity() {
         return telecomManager.defaultDialerPackage == packageName
     }
 
+    private fun getCallLog(): List<Map<String, Any?>> {
+        val entries = mutableListOf<Map<String, Any?>>()
+        val projection = arrayOf(
+            CallLog.Calls.CACHED_NAME,
+            CallLog.Calls.NUMBER,
+            CallLog.Calls.TYPE,
+            CallLog.Calls.DATE,
+            CallLog.Calls.DURATION
+        )
+        val cursor: Cursor? = contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            projection,
+            null,
+            null,
+            "${CallLog.Calls.DATE} DESC"
+        )
+        cursor?.use {
+            val nameIdx     = it.getColumnIndex(CallLog.Calls.CACHED_NAME)
+            val numberIdx   = it.getColumnIndex(CallLog.Calls.NUMBER)
+            val typeIdx     = it.getColumnIndex(CallLog.Calls.TYPE)
+            val dateIdx     = it.getColumnIndex(CallLog.Calls.DATE)
+            val durationIdx = it.getColumnIndex(CallLog.Calls.DURATION)
+
+            while (it.moveToNext()) {
+                val typeInt = it.getInt(typeIdx)
+                val typeStr = when (typeInt) {
+                    CallLog.Calls.INCOMING_TYPE  -> "incoming"
+                    CallLog.Calls.OUTGOING_TYPE  -> "outgoing"
+                    CallLog.Calls.MISSED_TYPE    -> "missed"
+                    CallLog.Calls.REJECTED_TYPE  -> "rejected"
+                    else                          -> "unknown"
+                }
+                entries.add(
+                    mapOf(
+                        "name"      to it.getString(nameIdx),
+                        "number"    to it.getString(numberIdx),
+                        "callType"  to typeStr,
+                        "timestamp" to it.getLong(dateIdx),
+                        "duration"  to it.getInt(durationIdx)
+                    )
+                )
+                if (entries.size >= 100) break  // limit to 100 entries
+            }
+        }
+        return entries
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Handle incoming call intent when app is already running
         if (intent.action == Intent.ACTION_CALL || intent.action == Intent.ACTION_DIAL) {
             val uri = intent.data
             if (uri != null) {

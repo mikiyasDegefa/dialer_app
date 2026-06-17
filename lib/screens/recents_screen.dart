@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:call_log/call_log.dart';
 import 'package:provider/provider.dart';
 import '../providers/call_log_provider.dart';
 import '../providers/pin_provider.dart';
@@ -10,22 +9,22 @@ import 'in_call_screen.dart';
 class RecentsScreen extends StatelessWidget {
   const RecentsScreen({super.key});
 
-  IconData _typeIcon(CallType? type) {
+  IconData _typeIcon(String? type) {
     switch (type) {
-      case CallType.incoming: return Icons.call_received;
-      case CallType.outgoing: return Icons.call_made;
-      case CallType.missed:   return Icons.call_missed;
-      case CallType.rejected: return Icons.call_end;
-      default:                return Icons.call;
+      case 'incoming': return Icons.call_received;
+      case 'outgoing': return Icons.call_made;
+      case 'missed':   return Icons.call_missed;
+      case 'rejected': return Icons.call_end;
+      default:         return Icons.call;
     }
   }
 
-  Color _typeColor(CallType? type, BuildContext context) {
+  Color _typeColor(String? type, BuildContext context) {
     switch (type) {
-      case CallType.missed:
-      case CallType.rejected:
+      case 'missed':
+      case 'rejected':
         return Colors.red;
-      case CallType.incoming:
+      case 'incoming':
         return Colors.green;
       default:
         return Theme.of(context).colorScheme.primary;
@@ -92,7 +91,8 @@ class RecentsScreen extends StatelessWidget {
               final number = entry.number ?? 'Unknown';
               final name = entry.name ?? number;
               final duration = provider.formatDuration(entry.duration);
-              final isProtected = context.watch<PinProvider>().isProtected(number);
+              final isProtected =
+                  context.watch<PinProvider>().isProtected(number);
 
               return ListTile(
                 leading: CircleAvatar(
@@ -106,13 +106,16 @@ class RecentsScreen extends StatelessWidget {
                 ),
                 title: Row(
                   children: [
-                    Expanded(child: Text(name, overflow: TextOverflow.ellipsis)),
+                    Expanded(
+                        child: Text(name, overflow: TextOverflow.ellipsis)),
                     if (isProtected)
                       const Icon(Icons.lock, size: 14, color: Colors.orange),
                   ],
                 ),
                 subtitle: Text(
-                  '${number == name ? '' : '$number  ·  '}${duration.isNotEmpty ? '$duration  ·  ' : ''}${_when(entry.timestamp)}',
+                  '${number == name ? '' : '$number  ·  '}'
+                  '${duration.isNotEmpty ? '$duration  ·  ' : ''}'
+                  '${_when(entry.timestamp)}',
                   style: const TextStyle(fontSize: 12),
                 ),
                 trailing: IconButton(

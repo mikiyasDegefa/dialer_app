@@ -1,8 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:call_log/call_log.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/services.dart';
+
+class CallLogEntry {
+  final String? name;
+  final String? number;
+  final String? callType; // incoming, outgoing, missed, rejected
+  final int? timestamp;
+  final int? duration;
+
+  CallLogEntry({
+    this.name,
+    this.number,
+    this.callType,
+    this.timestamp,
+    this.duration,
+  });
+
+  factory CallLogEntry.fromMap(Map m) => CallLogEntry(
+        name: m['name'] as String?,
+        number: m['number'] as String?,
+        callType: m['callType'] as String?,
+        timestamp: m['timestamp'] as int?,
+        duration: m['duration'] as int?,
+      );
+}
 
 class CallLogProvider extends ChangeNotifier {
+  static const _channel = MethodChannel('com.example.dialer_app/calls');
+
   List<CallLogEntry> _entries = [];
   bool _loading = false;
 
@@ -10,14 +35,18 @@ class CallLogProvider extends ChangeNotifier {
   bool get loading => _loading;
 
   Future<void> load() async {
-    final status = await Permission.phone.request();
-    if (!status.isGranted) return;
-
     _loading = true;
     notifyListeners();
-
-    final entries = await CallLog.get();
-    _entries = entries.toList();
+    try {
+      final raw = await _channel.invokeMethod<List>('getCallLog');
+      if (raw != null) {
+        _entries = raw
+            .map((e) => CallLogEntry.fromMap(Map.from(e as Map)))
+            .toList();
+      }
+    } catch (_) {
+      _entries = [];
+    }
     _loading = false;
     notifyListeners();
   }
