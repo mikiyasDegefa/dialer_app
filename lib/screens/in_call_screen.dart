@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/call_service.dart';
 
 class InCallScreen extends StatefulWidget {
@@ -12,30 +13,57 @@ class InCallScreen extends StatefulWidget {
 }
 
 class _InCallScreenState extends State<InCallScreen> {
+  static const _eventChannel =
+      EventChannel('com.example.dialer_app/call_state');
+
+  // Call state from native
+  String _callState = 'dialing'; // dialing | ringing | active | holding | disconnected
+  StreamSubscription? _stateSub;
+
+  // Controls
   bool _muted = false;
   bool _speaker = false;
   bool _held = false;
   bool _showKeypad = false;
+
+  // Timer — only runs when state == active
   int _seconds = 0;
   Timer? _timer;
-  String _status = 'Calling...';
 
   @override
   void initState() {
     super.initState();
-    // Start timer after a short delay to simulate call connecting
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _status = 'On call');
-        _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-          if (mounted) setState(() => _seconds++);
-        });
+    _stateSub = _eventChannel
+        .receiveBroadcastStream()
+        .listen(_onStateChange, onError: (_) {});
+  }
+
+  void _onStateChange(dynamic event) {
+    final state = event as String;
+    if (!mounted) return;
+    setState(() => _callState = state);
+
+    if (state == 'active') {
+      // Start the call timer only once the call is actually picked up
+      _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _seconds++);
+      });
+    } else if (state == 'disconnected') {
+      _timer?.cancel();
+      // Auto-close the in-call screen
+      if (mounted) Navigator.of(context).pop();
+    } else {
+      // Not active — stop timer if it was running (e.g. went to hold)
+      if (state == 'holding') {
+        _timer?.cancel();
+        _timer = null;
       }
-    });
+    }
   }
 
   @override
   void dispose() {
+    _stateSub?.cancel();
     _timer?.cancel();
     super.dispose();
   }
@@ -46,9 +74,20 @@ class _InCallScreenState extends State<InCallScreen> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  String get _statusLabel {
+    switch (_callState) {
+      case 'dialing':     return 'Calling…';
+      case 'connecting':  return 'Connecting…';
+      case 'ringing':     return 'Ringing…';
+      case 'active':      return _elapsed;
+      case 'holding':     return 'On hold';
+      case 'disconnected':return 'Call ended';
+      default:            return _callState;
+    }
+  }
+
   Future<void> _hangUp() async {
     await CallService.endCall();
-    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _toggleMute() async {
@@ -71,33 +110,37 @@ class _InCallScreenState extends State<InCallScreen> {
     required String label,
     required VoidCallback onTap,
     bool active = false,
+    bool enabled = true,
   }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(40),
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.surfaceVariant,
-            ),
-            child: Icon(
-              icon,
-              color: active
-                  ? Theme.of(context).colorScheme.onPrimary
-                  : Theme.of(context).colorScheme.onSurfaceVariant,
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.4,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: enabled ? onTap : null,
+            borderRadius: BorderRadius.circular(40),
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.surfaceVariant,
+              ),
+              child: Icon(
+                icon,
+                color: active
+                    ? Theme.of(context).colorScheme.onPrimary
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(label, style: const TextStyle(fontSize: 12)),
-      ],
+          const SizedBox(height: 6),
+          Text(label, style: const TextStyle(fontSize: 12)),
+        ],
+      ),
     );
   }
 
@@ -139,108 +182,129 @@ class _InCallScreenState extends State<InCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            children: [
-              const SizedBox(height: 48),
-              CircleAvatar(
-                radius: 48,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                child: Text(
-                  (widget.name ?? widget.number)[0].toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 40,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+    final isActive = _callState == 'active';
+    final displayName = widget.name ?? widget.number;
+
+    return PopScope(
+      canPop: false, // prevent back gesture during call
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              children: [
+                const SizedBox(height: 48),
+                // Avatar
+                CircleAvatar(
+                  radius: 48,
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primaryContainer,
+                  child: Text(
+                    displayName[0].toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 40,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                widget.name ?? widget.number,
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              if (widget.name != null)
-                Text(widget.number,
-                    style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 8),
-              Text(_status,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.outline)),
-              if (_seconds > 0)
-                Text(_elapsed,
-                    style: Theme.of(context).textTheme.titleLarge),
-              const Spacer(),
-              if (_showKeypad) ...[
-                _buildKeypad(),
                 const SizedBox(height: 16),
-              ],
-              // Controls row 1
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _controlButton(
-                    icon: _muted ? Icons.mic_off : Icons.mic,
-                    label: _muted ? 'Unmute' : 'Mute',
-                    onTap: _toggleMute,
-                    active: _muted,
+                Text(displayName,
+                    style: Theme.of(context).textTheme.headlineMedium),
+                if (widget.name != null)
+                  Text(widget.number,
+                      style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 12),
+                // Status / timer
+                Text(
+                  _statusLabel,
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: isActive
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.outline,
+                    fontVariations: isActive
+                        ? [const FontVariation('wght', 600)]
+                        : [],
                   ),
-                  _controlButton(
-                    icon: _speaker ? Icons.volume_up : Icons.volume_down,
-                    label: 'Speaker',
-                    onTap: _toggleSpeaker,
-                    active: _speaker,
-                  ),
-                  _controlButton(
-                    icon: Icons.dialpad,
-                    label: 'Keypad',
-                    onTap: () => setState(() => _showKeypad = !_showKeypad),
-                    active: _showKeypad,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              // Controls row 2
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _controlButton(
-                    icon: Icons.pause,
-                    label: _held ? 'Unhold' : 'Hold',
-                    onTap: _toggleHold,
-                    active: _held,
-                  ),
-                  _controlButton(
-                    icon: Icons.add_call,
-                    label: 'Add call',
-                    onTap: () => Navigator.pop(context),
-                  ),
-                  _controlButton(
-                    icon: Icons.bluetooth,
-                    label: 'Bluetooth',
-                    onTap: () {},
-                  ),
-                ],
-              ),
-              const SizedBox(height: 40),
-              // Hang up
-              GestureDetector(
-                onTap: _hangUp,
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.call_end, color: Colors.white, size: 32),
                 ),
-              ),
-              const SizedBox(height: 40),
-            ],
+                const Spacer(),
+                if (_showKeypad) ...[
+                  _buildKeypad(),
+                  const SizedBox(height: 16),
+                ],
+                // Controls row 1
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _controlButton(
+                      icon: _muted ? Icons.mic_off : Icons.mic,
+                      label: _muted ? 'Unmute' : 'Mute',
+                      onTap: _toggleMute,
+                      active: _muted,
+                      enabled: isActive,
+                    ),
+                    _controlButton(
+                      icon: _speaker ? Icons.volume_up : Icons.volume_down,
+                      label: 'Speaker',
+                      onTap: _toggleSpeaker,
+                      active: _speaker,
+                      enabled: isActive,
+                    ),
+                    _controlButton(
+                      icon: Icons.dialpad,
+                      label: 'Keypad',
+                      onTap: () =>
+                          setState(() => _showKeypad = !_showKeypad),
+                      active: _showKeypad,
+                      enabled: isActive,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Controls row 2
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _controlButton(
+                      icon: _held ? Icons.play_arrow : Icons.pause,
+                      label: _held ? 'Unhold' : 'Hold',
+                      onTap: _toggleHold,
+                      active: _held,
+                      enabled: isActive,
+                    ),
+                    _controlButton(
+                      icon: Icons.add_call,
+                      label: 'Add call',
+                      onTap: () {},
+                      enabled: isActive,
+                    ),
+                    _controlButton(
+                      icon: Icons.bluetooth,
+                      label: 'Bluetooth',
+                      onTap: () {},
+                      enabled: isActive,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 40),
+                // Hang up
+                GestureDetector(
+                  onTap: _hangUp,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.call_end,
+                        color: Colors.white, size: 32),
+                  ),
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),

@@ -11,15 +11,29 @@ import android.telecom.TelecomManager
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    private val CHANNEL = "com.example.dialer_app/calls"
+    private val CHANNEL       = "com.example.dialer_app/calls"
+    private val EVENT_CHANNEL = "com.example.dialer_app/call_state"
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // ── EventChannel: streams real call state to Flutter ──────────────
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, sink: EventChannel.EventSink?) {
+                    CallConnection.eventSink = sink
+                }
+                override fun onCancel(arguments: Any?) {
+                    CallConnection.eventSink = null
+                }
+            })
+
+        // ── MethodChannel: call controls ──────────────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -89,8 +103,7 @@ class MainActivity : FlutterActivity() {
     private fun placeCall(number: String) {
         val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val uri = Uri.fromParts("tel", number, null)
-        val extras = Bundle()
-        telecomManager.placeCall(uri, extras)
+        telecomManager.placeCall(uri, Bundle())
     }
 
     private fun requestDefaultDialer() {
@@ -117,10 +130,7 @@ class MainActivity : FlutterActivity() {
             CallLog.Calls.DURATION
         )
         val cursor: Cursor? = contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            projection,
-            null,
-            null,
+            CallLog.Calls.CONTENT_URI, projection, null, null,
             "${CallLog.Calls.DATE} DESC"
         )
         cursor?.use {
@@ -129,26 +139,22 @@ class MainActivity : FlutterActivity() {
             val typeIdx     = it.getColumnIndex(CallLog.Calls.TYPE)
             val dateIdx     = it.getColumnIndex(CallLog.Calls.DATE)
             val durationIdx = it.getColumnIndex(CallLog.Calls.DURATION)
-
             while (it.moveToNext()) {
-                val typeInt = it.getInt(typeIdx)
-                val typeStr = when (typeInt) {
-                    CallLog.Calls.INCOMING_TYPE  -> "incoming"
-                    CallLog.Calls.OUTGOING_TYPE  -> "outgoing"
-                    CallLog.Calls.MISSED_TYPE    -> "missed"
-                    CallLog.Calls.REJECTED_TYPE  -> "rejected"
-                    else                          -> "unknown"
+                val typeStr = when (it.getInt(typeIdx)) {
+                    CallLog.Calls.INCOMING_TYPE -> "incoming"
+                    CallLog.Calls.OUTGOING_TYPE -> "outgoing"
+                    CallLog.Calls.MISSED_TYPE   -> "missed"
+                    CallLog.Calls.REJECTED_TYPE -> "rejected"
+                    else                        -> "unknown"
                 }
-                entries.add(
-                    mapOf(
-                        "name"      to it.getString(nameIdx),
-                        "number"    to it.getString(numberIdx),
-                        "callType"  to typeStr,
-                        "timestamp" to it.getLong(dateIdx),
-                        "duration"  to it.getInt(durationIdx)
-                    )
-                )
-                if (entries.size >= 100) break  // limit to 100 entries
+                entries.add(mapOf(
+                    "name"      to it.getString(nameIdx),
+                    "number"    to it.getString(numberIdx),
+                    "callType"  to typeStr,
+                    "timestamp" to it.getLong(dateIdx),
+                    "duration"  to it.getInt(durationIdx)
+                ))
+                if (entries.size >= 100) break
             }
         }
         return entries
@@ -157,15 +163,10 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == Intent.ACTION_CALL || intent.action == Intent.ACTION_DIAL) {
-            val uri = intent.data
-            if (uri != null) {
-                val number = uri.schemeSpecificPart
-                flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
-                    MethodChannel(messenger, CHANNEL).invokeMethod(
-                        "onIncomingCallIntent",
-                        mapOf("number" to number)
-                    )
-                }
+            val number = intent.data?.schemeSpecificPart ?: return
+            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                MethodChannel(messenger, CHANNEL)
+                    .invokeMethod("onIncomingCallIntent", mapOf("number" to number))
             }
         }
     }
